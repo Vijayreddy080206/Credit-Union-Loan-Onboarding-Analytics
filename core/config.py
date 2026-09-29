@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o-mini"
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-3-5-haiku-20241022"
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_TEXT_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_VISION_MODEL: str = "openai/gpt-oss-20b"
     LLM_CONFIDENCE_THRESHOLD: float = 0.80
     LLM_TIMEOUT_SECONDS: int = 30
     LLM_MAX_RETRIES: int = 3
@@ -58,7 +62,6 @@ class Settings(BaseSettings):
 
     # Pipeline thresholds (rules engine)
     MIN_AGE_YEARS: int = 18
-    MAX_AGE_YEARS: int = 70
     MIN_MONTHLY_INCOME_USD: float = 1500.0
     MAX_LOAN_TO_INCOME_RATIO: float = 5.0
     ID_EXPIRY_BUFFER_DAYS: int = 30

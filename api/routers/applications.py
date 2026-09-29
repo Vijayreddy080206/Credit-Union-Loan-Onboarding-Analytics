@@ -131,3 +131,41 @@ async def trigger_processing(app_id: UUID, db: AsyncSession = Depends(get_db)):
     
     return {"message": "Processed", "decision": app.status.value, "flags": app.flags}
 
+from pydantic import BaseModel
+
+class ReviewRequest(BaseModel):
+    reviewer_id: str
+    notes: str = ""
+
+@router.post("/{app_id}/approve")
+async def approve_application(app_id: UUID, req: ReviewRequest, db: AsyncSession = Depends(get_db)):
+    """Human manually approves an application."""
+    result = await db.execute(select(Application).where(Application.id == app_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+        
+    if app.status != ApplicationStatus.HUMAN_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Cannot approve app in status {app.status}")
+        
+    app.status = ApplicationStatus.MANUALLY_APPROVED
+    await write_event(db, app_id, AuditEventType.MANUALLY_APPROVED, req.model_dump())
+    await db.commit()
+    return {"message": "Approved"}
+
+@router.post("/{app_id}/reject")
+async def reject_application(app_id: UUID, req: ReviewRequest, db: AsyncSession = Depends(get_db)):
+    """Human manually rejects an application."""
+    result = await db.execute(select(Application).where(Application.id == app_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+        
+    if app.status != ApplicationStatus.HUMAN_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Cannot reject app in status {app.status}")
+        
+    app.status = ApplicationStatus.MANUALLY_REJECTED
+    app.rejection_reason = "manual_review_rejection"
+    await write_event(db, app_id, AuditEventType.MANUALLY_REJECTED, req.model_dump())
+    await db.commit()
+    return {"message": "Rejected"}

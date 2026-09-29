@@ -17,18 +17,26 @@ from schemas.rules import RuleResult, RulesEngineResult
 
 logger = structlog.get_logger(__name__)
 
+from core.config import settings
+
 # Constants
-MIN_AGE = 18
-MAX_AGE = 70
-MIN_MONTHLY_INCOME = 1500.0
-MAX_LOAN_TO_INCOME_RATIO = 6.0
-CONFIDENCE_THRESHOLD = 0.80
+MIN_AGE = settings.MIN_AGE_YEARS
+MIN_MONTHLY_INCOME = settings.MIN_MONTHLY_INCOME_USD
+MAX_LOAN_TO_INCOME_RATIO = settings.MAX_LOAN_TO_INCOME_RATIO
+CONFIDENCE_THRESHOLD = settings.LLM_CONFIDENCE_THRESHOLD
+ID_EXPIRY_BUFFER_DAYS = settings.ID_EXPIRY_BUFFER_DAYS
 
 class RulesEngine:
     def evaluate(self, application: Application, extraction: ApplicationExtractionResult) -> RulesEngineResult:
         logger.info("rules_engine_evaluating", app_id=str(application.id))
         
-        # 1. Missing Documents Check
+        # 1. Check for extraction failures and missing docs
+        if extraction.has_errors:
+            return RulesEngineResult(
+                decision=ApplicationStatus.HUMAN_REVIEW,
+                flags=["extraction_failed"]
+            )
+            
         if not extraction.government_id:
             return RulesEngineResult(
                 decision=ApplicationStatus.AUTO_REJECTED,
@@ -46,7 +54,8 @@ class RulesEngine:
         if extraction.government_id.expiry_date.is_confident(CONFIDENCE_THRESHOLD):
             try:
                 expiry = date.fromisoformat(extraction.government_id.expiry_date.value)
-                if expiry < date.today():
+                import datetime
+                if expiry < date.today() + datetime.timedelta(days=ID_EXPIRY_BUFFER_DAYS):
                     return RulesEngineResult(
                         decision=ApplicationStatus.AUTO_REJECTED,
                         rejection_reason="government_id_expired"
@@ -58,16 +67,12 @@ class RulesEngine:
         if extraction.government_id.date_of_birth.is_confident(CONFIDENCE_THRESHOLD):
             try:
                 dob = date.fromisoformat(extraction.government_id.date_of_birth.value)
-                age = (date.today() - dob).days / 365.25
+                today = date.today()
+                age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
                 if age < MIN_AGE:
                     return RulesEngineResult(
                         decision=ApplicationStatus.AUTO_REJECTED,
                         rejection_reason="applicant_under_minimum_age"
-                    )
-                if age > MAX_AGE:
-                    return RulesEngineResult(
-                        decision=ApplicationStatus.AUTO_REJECTED,
-                        rejection_reason="applicant_over_maximum_age"
                     )
             except (ValueError, TypeError):
                 pass

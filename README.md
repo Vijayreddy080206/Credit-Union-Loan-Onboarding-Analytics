@@ -1,5 +1,5 @@
-# 🏦 AI-Powered Loan Onboarding System
-**An Enterprise-Grade Straight-Through Processing (STP) Pipeline**
+# 🏦 Credit Union Loan Onboarding System
+**A Straight-Through Processing (STP) Pipeline**
 
 > **⚠️ ALL DATA IN THIS PROJECT IS 100% SYNTHETIC.**
 > No real PII is used anywhere. All applicant names, ID numbers, addresses, incomes, and documents are generated programmatically using Faker. This project is a portfolio demonstration only.
@@ -7,9 +7,9 @@
 ---
 
 ## 📖 Project Overview
-This project is a highly automated, production-ready **Loan Onboarding and Underwriting System**. It is designed to mimic the internal infrastructure of a modern fintech company or credit union. 
+This project is a **Loan Onboarding and Underwriting System** designed to demonstrate data engineering and workflow automation concepts for a fintech context.
 
-The core objective of the system is to take a raw loan application (including unstructured documents like PDFs of IDs and Pay Stubs) and automatically determine if the applicant is approved, rejected, or requires human review. It achieves this by combining the reasoning capabilities of Large Language Models (LLMs) with the strict reliability of a deterministic rules engine.
+The system processes a raw loan application (including unstructured documents like PDFs of IDs and Pay Stubs), automatically extracting data via LLMs and evaluating it against a deterministic rules engine to output an approval, rejection, or human review decision.
 
 ---
 
@@ -57,8 +57,8 @@ The project is built using a modern microservices architecture, entirely contain
 *   **Migrations:** Managed via Alembic to track schema changes over time.
 
 ### 3. AI Extraction Layer (LLMs)
-*   **Tech:** OpenAI / Anthropic APIs (with a Mock provider for local testing).
-*   **Role:** Replaces manual data entry. When PDFs (Government IDs, Proof of Income) are uploaded, they are sent to an LLM with strict instructions to return structured JSON. The LLM acts purely as an OCR and data structuring tool, calculating a "confidence score" for its own extractions.
+*   **Tech:** Groq API (openai/gpt-oss-120b and openai/gpt-oss-20b).
+*   **Role:** When PDFs (Government IDs, Proof of Income) are uploaded, they are sent to the LLM to return structured JSON. The LLM extracts the structured data from unstructured text and images and returns it for evaluation.
 
 ### 4. Deterministic Rules Engine
 *   **Tech:** Pure Python.
@@ -74,9 +74,9 @@ The project is built using a modern microservices architecture, entirely contain
 
 ---
 
-## 🧠 Key Enterprise Concepts Demonstrated
+## 🧠 Key Concepts Demonstrated
 
-This project isn't just a basic CRUD app; it implements several advanced engineering patterns required in the financial industry:
+This project implements several engineering patterns required in the financial industry:
 
 ### 1. Probabilistic vs. Deterministic Boundaries
 A common mistake in AI engineering is letting the AI make business decisions. This project enforces a strict boundary:
@@ -114,15 +114,15 @@ To test the system at scale, we wrote a synthetic data generation script using t
 
 ---
 
-## 📊 Evaluation Results (61 Applications)
+## 📊 Evaluation Results (66 Applications)
 
 | Metric | Value |
 |---|---|
-| Synthetic Applicants Evaluated | 61 |
-| Extraction Data Accuracy (Mock) | 100.0% |
-| Straight-Through Processing (STP) Rate | 39.3% |
-| Applications Auto-Rejected | 44.3% |
-| Applications Queued for Manual Review | 16.4% |
+| Synthetic Applicants Evaluated | 66 |
+| Extraction Data Field Accuracy | ~98.0% |
+| Straight-Through Processing (STP) Rate | 40.9% |
+| Applications Auto-Rejected | 40.9% |
+| Applications Queued for Manual Review | 18.2% |
 
 ---
 

@@ -107,10 +107,45 @@ def _make_pdf(path: Path, lines: list[str], watermark: str = "") -> None:
         path = path.with_suffix(".txt")
         path.write_text("\n".join(lines))
 
+def _make_rotated_pdf(path: Path, lines: list[str], watermark: str = "") -> None:
+    """Simulates a rotated scan (90 degrees)."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.pdfgen import canvas
+        path.parent.mkdir(parents=True, exist_ok=True)
+        c = canvas.Canvas(str(path), pagesize=A4)
+        width, height = A4
+        c.translate(width, 0)
+        c.rotate(90)
+        
+        # Note: after rotating 90 deg, width becomes height and height becomes width for coordinates
+        y = width - 80
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y, lines[0])
+        c.setFont("Helvetica", 11)
+        for line in lines[1:]:
+            y -= 22
+            c.drawString(50, y, line)
+            
+        if watermark:
+            c.saveState()
+            c.setFont("Helvetica-Bold", 40)
+            c.setFillColor(colors.red)
+            c.setFillAlpha(0.3)
+            c.translate(height / 2, width / 2)
+            c.rotate(45)
+            c.drawCentredString(0, 0, watermark)
+            c.restoreState()
+        c.save()
+    except ImportError:
+        path = path.with_suffix(".txt")
+        path.write_text("\n".join(lines) + "\n(ROTATED)")
+
 
 def _make_id_pdf(path: Path, name: str, dob: date, id_number: str,
-                 address: str, expiry: date, watermark: str = "") -> None:
-    _make_pdf(path, [
+                 address: str, expiry: date, watermark: str = "", rotated: bool = False) -> None:
+    lines = [
         "GOVERNMENT ISSUED ID — SYNTHETIC (NOT REAL)",
         f"Full Name:    {name}",
         f"Date of Birth: {dob.isoformat()}",
@@ -119,7 +154,11 @@ def _make_id_pdf(path: Path, name: str, dob: date, id_number: str,
         f"Expiry Date:  {expiry.isoformat()}",
         "",
         "*** THIS IS SYNTHETIC TEST DATA — NOT A REAL DOCUMENT ***",
-    ], watermark=watermark)
+    ]
+    if rotated:
+        _make_rotated_pdf(path, lines, watermark)
+    else:
+        _make_pdf(path, lines, watermark)
 
 
 def _make_income_pdf(path: Path, name: str, employer: str,
@@ -605,6 +644,55 @@ def _borderline_applicant(app_id: str) -> dict[str, Any]:
         ],
     }
 
+def _duplicate_applicant(app_id: str) -> dict[str, Any]:
+    """Generates an applicant that is clearly a duplicate (we just add a 'is_duplicate' flag to metadata)"""
+    res = _clean_applicant(app_id)
+    res["scenario"] = "DUPLICATE_APPLICANT"
+    res["expected_decision"] = "HUMAN_REVIEW"
+    res["expected_flag"] = "duplicate_application"
+    return res
+
+def _rotated_applicant(app_id: str) -> dict[str, Any]:
+    """Generates an applicant with rotated documents"""
+    name = fake.name()
+    dob = fake.date_of_birth(minimum_age=25, maximum_age=55)
+    address = fake.address().replace("\n", ", ")
+    id_number = fake.bothify("ID-########")
+    id_expiry = TODAY + timedelta(days=random.randint(60, 365))
+    monthly_income = round(random.uniform(3000, 8000), 2)
+    loan_amount = round(random.uniform(5000, monthly_income * 12 * 2), 2)
+    employer = fake.company()
+
+    doc_dir = DOCS_DIR / app_id
+    _make_id_pdf(doc_dir / "government_id.pdf", name, dob, id_number, address, id_expiry, rotated=True)
+    _make_income_pdf(doc_dir / "proof_of_income.pdf", name, employer, monthly_income, f"{fake.month_name()} {TODAY.year}")
+    _make_address_pdf(doc_dir / "address_proof.pdf", name, address, fake.company() + " Utilities", TODAY - timedelta(days=15))
+
+    return {
+        "application_id": app_id,
+        "scenario": "ROTATED_DOCS",
+        "expected_decision": "AUTO_APPROVED",
+        "applicant_name": name,
+        "applicant_email": fake.email(),
+        "requested_loan_amount": loan_amount,
+        "loan_purpose": "Home renovation",
+        "ground_truth": {
+            "name": name,
+            "dob": dob.isoformat(),
+            "id_number": id_number,
+            "address": address,
+            "id_expiry": id_expiry.isoformat(),
+            "monthly_income": monthly_income,
+            "annual_income": round(monthly_income * 12, 2),
+            "employer": employer,
+        },
+        "documents": [
+            {"type": "GOVERNMENT_ID", "path": str(doc_dir / "government_id.pdf")},
+            {"type": "PROOF_OF_INCOME", "path": str(doc_dir / "proof_of_income.pdf")},
+            {"type": "ADDRESS_PROOF", "path": str(doc_dir / "address_proof.pdf")},
+        ],
+    }
+
 
 # ---------------------------------------------------------------------------
 # Scenario distribution (targeting 50+ applicants for Phase 8 evaluation)
@@ -620,6 +708,8 @@ SCENARIO_DISTRIBUTION = [
     ("MISSING_DOC",     4, _missing_doc_applicant),
     ("LOW_CONFIDENCE",  5, _low_confidence_applicant),
     ("BORDERLINE",      4, _borderline_applicant),
+    ("DUPLICATE",       2, _duplicate_applicant),
+    ("ROTATED_DOCS",    3, _rotated_applicant),
 ]
 # Total: 61 applicants
 
@@ -633,6 +723,13 @@ def generate_all() -> list[dict]:
         for _ in range(count):
             app_id = str(uuid.uuid4())
             record = factory(app_id)
+            
+            # Save ground_truth.json for each document
+            doc_dir = DOCS_DIR / app_id
+            doc_dir.mkdir(parents=True, exist_ok=True)
+            with open(doc_dir / "ground_truth.json", "w") as gt_file:
+                json.dump(record["ground_truth"], gt_file, indent=2, default=str)
+                
             applicants.append(record)
             counters[scenario] += 1
             print(f"  OK {scenario:20s} [{counters[scenario]:02d}/{count}]  {app_id[:8]}...")

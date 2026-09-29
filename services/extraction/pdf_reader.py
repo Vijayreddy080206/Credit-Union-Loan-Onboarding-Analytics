@@ -54,3 +54,18 @@ def extract_text_from_bytes(content: bytes) -> str:
         return "\n".join(pages)
     except Exception as exc:
         return f"PDF_READ_ERROR: {exc}"
+
+def render_pdf_to_image_base64(file_bytes: bytes) -> str:
+    """Render the first page of a PDF to a JPEG base64 string using PyMuPDF."""
+    import fitz  # PyMuPDF
+    import base64
+    try:
+        doc = fitz.open("pdf", file_bytes)
+        if not doc.page_count:
+            return ""
+        page = doc[0]
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for clarity
+        img_bytes = pix.tobytes("jpeg")
+        return base64.b64encode(img_bytes).decode("utf-8")
+    except Exception as exc:
+        return ""

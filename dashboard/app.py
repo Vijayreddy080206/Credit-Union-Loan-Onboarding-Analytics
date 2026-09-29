@@ -34,6 +34,8 @@ st.title("🏦 Credit Union Loan Onboarding — Analytics Dashboard")
 try:
     # 1. Load Data
     apps_df = load_data("SELECT * FROM applications")
+    if not apps_df.empty:
+        apps_df['id'] = apps_df['id'].astype(str)
     
     if apps_df.empty:
         st.warning("No applications found in the database. Have you run the pipeline yet?")
@@ -67,8 +69,8 @@ try:
                           'AUTO_APPROVED': '#2e7d32', 
                           'AUTO_REJECTED': '#c62828',
                           'HUMAN_REVIEW': '#f9a825',
-                          'APPROVED': '#4caf50',
-                          'REJECTED': '#e53935'
+                          'MANUALLY_APPROVED': '#4caf50',
+                          'MANUALLY_REJECTED': '#e53935'
                       })
         st.plotly_chart(fig1, use_container_width=True)
         
@@ -94,6 +96,31 @@ try:
     ]
     if not review_queue.empty:
         st.dataframe(review_queue, use_container_width=True)
+        
+        st.markdown("### Action Applications")
+        app_to_action = st.selectbox("Select Application ID to action", review_queue['id'].tolist())
+        notes = st.text_area("Review Notes")
+        
+        API_URL = os.getenv("API_URL", "http://localhost:8000")
+        
+        colA, colB = st.columns(2)
+        if colA.button("Approve"):
+            import requests
+            res = requests.post(f"{API_URL}/applications/{app_to_action}/approve", json={"reviewer_id": "dashboard_user", "notes": notes})
+            if res.status_code == 200:
+                st.success("Approved!")
+                st.rerun()
+            else:
+                st.error(res.text)
+                
+        if colB.button("Reject"):
+            import requests
+            res = requests.post(f"{API_URL}/applications/{app_to_action}/reject", json={"reviewer_id": "dashboard_user", "notes": notes})
+            if res.status_code == 200:
+                st.success("Rejected!")
+                st.rerun()
+            else:
+                st.error(res.text)
     else:
         st.success("The human review queue is empty!")
 

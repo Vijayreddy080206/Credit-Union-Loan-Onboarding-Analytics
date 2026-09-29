@@ -1,0 +1,179 @@
+{
+  "name": "Loan Application STP Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-application",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook: Application Submitted",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.API_BASE_URL}}/applications/{{$json.body.application_id}}/process",
+        "jsonParameters": true,
+        "options": {}
+      },
+      "name": "Trigger Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json.decision}}",
+                    "value2": "AUTO_APPROVED"
+                  }
+                ]
+              },
+              "output": 0
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json.decision}}",
+                    "value2": "AUTO_REJECTED"
+                  }
+                ]
+              },
+              "output": 1
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json.decision}}",
+                    "value2": "HUMAN_REVIEW"
+                  }
+                ]
+              },
+              "output": 2
+            }
+          ]
+        },
+        "fallbackOutput": 3
+      },
+      "name": "Switch on Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.API_BASE_URL}}/crm/sync",
+        "jsonParameters": true,
+        "options": {}
+      },
+      "name": "Sync to CRM (Approved)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        900,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.API_BASE_URL}}/crm/sync",
+        "jsonParameters": true,
+        "options": {}
+      },
+      "name": "Sync to CRM (Rejected)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.API_BASE_URL}}/slack/notify",
+        "jsonParameters": true,
+        "options": {}
+      },
+      "name": "Notify Slack (Human Review)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        900,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: Application Submitted": {
+      "main": [
+        [
+          {
+            "node": "Trigger Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Processing": {
+      "main": [
+        [
+          {
+            "node": "Switch on Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch on Decision": {
+      "main": [
+        [
+          {
+            "node": "Sync to CRM (Approved)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync to CRM (Rejected)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Slack (Human Review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

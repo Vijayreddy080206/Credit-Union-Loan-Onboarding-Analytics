@@ -13,6 +13,7 @@ asyncpg==0.29.0          # async PostgreSQL driver for SQLAlchemy
 psycopg2-binary==2.9.9   # sync driver for Alembic CLI
 greenlet==3.0.3          # required by SQLAlchemy asyncio extension
 pypdf==4.3.1             # extract text from PDF documents
+PyMuPDF==1.24.11         # render PDF to image for vision models
 
 # LLM clients
 openai==1.51.0

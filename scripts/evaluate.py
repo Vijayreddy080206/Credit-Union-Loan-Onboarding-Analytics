@@ -35,6 +35,10 @@ async def evaluate_all():
         "AUTO_REJECTED": {"AUTO_APPROVED": 0, "AUTO_REJECTED": 0, "HUMAN_REVIEW": 0},
         "HUMAN_REVIEW": {"AUTO_APPROVED": 0, "AUTO_REJECTED": 0, "HUMAN_REVIEW": 0},
     }
+    
+    total_fields = 0
+    correct_fields = 0
+    field_errors = []
 
     for app_data in applicants:
         app_id = app_data["application_id"]
@@ -55,14 +59,37 @@ async def evaluate_all():
             
             res = await extraction_service.extract_document(doc_type, file_path=doc_path)
             
+            
             if doc_type == DocumentType.GOVERNMENT_ID:
                 ext_result.government_id = res.government_id
+                actual_data = res.government_id.model_dump() if res.government_id else {}
             elif doc_type == DocumentType.PROOF_OF_INCOME:
                 ext_result.proof_of_income = res.proof_of_income
+                actual_data = res.proof_of_income.model_dump() if res.proof_of_income else {}
             elif doc_type == DocumentType.ADDRESS_PROOF:
                 ext_result.address_proof = res.address_proof
+                actual_data = res.address_proof.model_dump() if res.address_proof else {}
                 
             ext_result.overall_min_confidence = min(ext_result.overall_min_confidence, res.min_confidence)
+            
+            # Compare with Ground Truth
+            gt_path = Path(doc_path).parent / "ground_truth.json"
+            if gt_path.exists():
+                with open(gt_path, "r") as f:
+                    gt = json.load(f)
+                
+                # Check fields
+                # Not all ground truth fields apply to every document type, but we can do a naive intersection
+                for k, v in gt.items():
+                    if k in actual_data:
+                        actual_val = actual_data[k].get("value") if isinstance(actual_data[k], dict) else actual_data[k]
+                        total_fields += 1
+                        
+                        # Fuzzy match for numbers/dates (simple string containment for now)
+                        if str(v).lower() in str(actual_val).lower() or str(actual_val).lower() in str(v).lower():
+                            correct_fields += 1
+                        else:
+                            field_errors.append(f"{app_id[:8]} - {doc_type.value}.{k}: expected '{v}', got '{actual_val}'")
             
         # 3. Run Rules Engine
         rules_res = rules_engine.evaluate(app, ext_result)
@@ -79,11 +106,13 @@ async def evaluate_all():
 
     # Print Metrics
     accuracy = (correct_decisions / len(applicants)) * 100
+    field_accuracy = (correct_fields / total_fields) * 100 if total_fields > 0 else 0
     print("\n" + "="*50)
     print("EVALUATION RESULTS")
     print("="*50)
     print(f"Total Applications: {len(applicants)}")
-    print(f"Overall Accuracy:   {accuracy:.1f}%")
+    print(f"Overall Decision Accuracy:   {accuracy:.1f}%")
+    print(f"Field Extraction Accuracy:   {field_accuracy:.1f}% ({correct_fields}/{total_fields})")
     
     print("\nConfusion Matrix (Rows: Expected, Cols: Actual):")
     print(f"{'':<15} | {'AUTO_APPROVED':<15} | {'AUTO_REJECTED':<15} | {'HUMAN_REVIEW':<15}")

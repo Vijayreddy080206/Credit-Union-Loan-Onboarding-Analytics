@@ -39,15 +39,15 @@ class BaseLLMAdapter(ABC):
     """Every LLM adapter must implement this interface."""
 
     @abstractmethod
-    async def extract_government_id(self, text: str) -> GovernmentIDExtraction:
+    async def extract_government_id(self, text: str, is_vision: bool = False, image_base64: str = None) -> GovernmentIDExtraction:
         ...
 
     @abstractmethod
-    async def extract_proof_of_income(self, text: str) -> ProofOfIncomeExtraction:
+    async def extract_proof_of_income(self, text: str, is_vision: bool = False, image_base64: str = None) -> ProofOfIncomeExtraction:
         ...
 
     @abstractmethod
-    async def extract_address_proof(self, text: str) -> AddressProofExtraction:
+    async def extract_address_proof(self, text: str, is_vision: bool = False, image_base64: str = None) -> AddressProofExtraction:
         ...
 
     @property
@@ -89,7 +89,7 @@ class MockLLMAdapter(BaseLLMAdapter):
     def method_name(self) -> str:
         return "mock"
 
-    async def extract_government_id(self, text: str) -> GovernmentIDExtraction:
+    async def extract_government_id(self, text: str, is_vision: bool = False, image_base64: str = None) -> GovernmentIDExtraction:
         is_damaged = "DAMAGED" in text
         return GovernmentIDExtraction(
             full_name=_r(text, r"Full Name:\s*(.+)"),
@@ -100,7 +100,7 @@ class MockLLMAdapter(BaseLLMAdapter):
             is_damaged=is_damaged,
         )
 
-    async def extract_proof_of_income(self, text: str) -> ProofOfIncomeExtraction:
+    async def extract_proof_of_income(self, text: str, is_vision: bool = False, image_base64: str = None) -> ProofOfIncomeExtraction:
         is_damaged = "DAMAGED" in text
         monthly = _r(text, r"Monthly Income:\s*\$?([\d,]+\.?\d*)")
         annual = _r(text, r"Annual Income:\s*\$?([\d,]+\.?\d*)")
@@ -113,7 +113,7 @@ class MockLLMAdapter(BaseLLMAdapter):
             is_damaged=is_damaged,
         )
 
-    async def extract_address_proof(self, text: str) -> AddressProofExtraction:
+    async def extract_address_proof(self, text: str, is_vision: bool = False, image_base64: str = None) -> AddressProofExtraction:
         is_damaged = "DAMAGED" in text
         return AddressProofExtraction(
             account_holder=_r(text, r"Account Holder:\s*(.+)"),
@@ -202,15 +202,15 @@ class OpenAIAdapter(BaseLLMAdapter):
         )
         return json.loads(response.choices[0].message.content)
 
-    async def extract_government_id(self, text: str) -> GovernmentIDExtraction:
+    async def extract_government_id(self, text: str, is_vision: bool = False, image_base64: str = None) -> GovernmentIDExtraction:
         data = await self._call(OPENAI_ID_PROMPT.format(text=text[:3000]))
         return GovernmentIDExtraction(**data)
 
-    async def extract_proof_of_income(self, text: str) -> ProofOfIncomeExtraction:
+    async def extract_proof_of_income(self, text: str, is_vision: bool = False, image_base64: str = None) -> ProofOfIncomeExtraction:
         data = await self._call(OPENAI_INCOME_PROMPT.format(text=text[:3000]))
         return ProofOfIncomeExtraction(**data)
 
-    async def extract_address_proof(self, text: str) -> AddressProofExtraction:
+    async def extract_address_proof(self, text: str, is_vision: bool = False, image_base64: str = None) -> AddressProofExtraction:
         data = await self._call(OPENAI_ADDRESS_PROMPT.format(text=text[:3000]))
         return AddressProofExtraction(**data)
 
@@ -250,16 +250,102 @@ class AnthropicAdapter(BaseLLMAdapter):
             text = re.sub(r"\n?```$", "", text)
         return json.loads(text)
 
-    async def extract_government_id(self, text: str) -> GovernmentIDExtraction:
+    async def extract_government_id(self, text: str, is_vision: bool = False, image_base64: str = None) -> GovernmentIDExtraction:
         data = await self._call(OPENAI_ID_PROMPT.format(text=text[:3000]))
         return GovernmentIDExtraction(**data)
 
-    async def extract_proof_of_income(self, text: str) -> ProofOfIncomeExtraction:
+    async def extract_proof_of_income(self, text: str, is_vision: bool = False, image_base64: str = None) -> ProofOfIncomeExtraction:
         data = await self._call(OPENAI_INCOME_PROMPT.format(text=text[:3000]))
         return ProofOfIncomeExtraction(**data)
 
-    async def extract_address_proof(self, text: str) -> AddressProofExtraction:
+    async def extract_address_proof(self, text: str, is_vision: bool = False, image_base64: str = None) -> AddressProofExtraction:
         data = await self._call(OPENAI_ADDRESS_PROMPT.format(text=text[:3000]))
+        return AddressProofExtraction(**data)
+
+
+# ---------------------------------------------------------------------------
+# Groq adapter
+# ---------------------------------------------------------------------------
+
+class GroqAdapter(BaseLLMAdapter):
+    """Calls Groq API (OpenAI compatible) for structured extraction."""
+
+    def __init__(self, api_key: str, base_url: str, text_model: str, vision_model: str, timeout: int = 30, max_retries: int = 3):
+        try:
+            from openai import AsyncOpenAI
+            # Disable built-in retries to use our custom backoff loop
+            self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
+            self._text_model = text_model
+            self._vision_model = vision_model
+        except ImportError:
+            raise ImportError("openai package not installed. Run: pip install openai")
+
+    @property
+    def method_name(self) -> str:
+        return "groq"
+
+    async def _call(self, user_prompt: str, is_vision: bool = False, image_base64: str = None) -> dict[str, Any]:
+        import json
+        import asyncio
+        from openai import RateLimitError, APIConnectionError
+
+        model = self._vision_model if is_vision else self._text_model
+        
+        content = []
+        if is_vision and image_base64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            })
+            content.append({"type": "text", "text": user_prompt})
+        else:
+            content = user_prompt
+
+        import structlog
+        logger = structlog.get_logger(__name__)
+
+        for attempt in range(5):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    response_format={"type": "json_object"} if not is_vision else None,
+                    messages=[
+                        {"role": "system", "content": OPENAI_SYSTEM_PROMPT + ("\nReturn ONLY JSON, no markdown formatting." if is_vision else "")},
+                        {"role": "user", "content": content},
+                    ],
+                )
+                text = response.choices[0].message.content.strip()
+                if text.startswith("```"):
+                    text = re.sub(r"^```json?\n?", "", text)
+                    text = re.sub(r"\n?```$", "", text)
+                return json.loads(text)
+            except RateLimitError as e:
+                logger.warning("groq_rate_limit", attempt=attempt+1)
+                if attempt == 4:
+                    raise
+                # Honor Retry-After header if present
+                retry_after = e.response.headers.get("retry-after") if hasattr(e, 'response') and e.response else None
+                if retry_after and retry_after.isdigit():
+                    sleep_time = int(retry_after)
+                else:
+                    sleep_time = 2 ** attempt
+                await asyncio.sleep(sleep_time)
+            except Exception as e:
+                logger.warning("groq_call_failed", attempt=attempt+1, error=str(e))
+                if attempt == 4:
+                    raise
+                await asyncio.sleep(2 ** attempt)
+
+    async def extract_government_id(self, text: str, is_vision: bool = False, image_base64: str = None) -> GovernmentIDExtraction:
+        data = await self._call(OPENAI_ID_PROMPT.format(text=text[:3000] if not is_vision else "Extract from this image"), is_vision, image_base64)
+        return GovernmentIDExtraction(**data)
+
+    async def extract_proof_of_income(self, text: str, is_vision: bool = False, image_base64: str = None) -> ProofOfIncomeExtraction:
+        data = await self._call(OPENAI_INCOME_PROMPT.format(text=text[:3000] if not is_vision else "Extract from this image"), is_vision, image_base64)
+        return ProofOfIncomeExtraction(**data)
+
+    async def extract_address_proof(self, text: str, is_vision: bool = False, image_base64: str = None) -> AddressProofExtraction:
+        data = await self._call(OPENAI_ADDRESS_PROMPT.format(text=text[:3000] if not is_vision else "Extract from this image"), is_vision, image_base64)
         return AddressProofExtraction(**data)
 
 
@@ -278,5 +364,7 @@ def get_llm_adapter(provider: str, **kwargs) -> BaseLLMAdapter:
         return OpenAIAdapter(**kwargs)
     elif provider == "anthropic":
         return AnthropicAdapter(**kwargs)
+    elif provider == "groq":
+        return GroqAdapter(**kwargs)
     else:
-        raise ValueError(f"Unknown LLM provider: {provider!r}. Choose: mock | openai | anthropic")
+        raise ValueError(f"Unknown LLM provider: {provider!r}. Choose: mock | openai | anthropic | groq")
