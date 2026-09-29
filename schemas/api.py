@@ -8,6 +8,7 @@ from datetime import datetime
 from models.application import ApplicationStatus, DocumentType
 
 class ApplicationCreate(BaseModel):
+    idempotency_key: str
     applicant_name: str
     applicant_email: str
     requested_loan_amount: float

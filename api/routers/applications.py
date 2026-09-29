@@ -22,7 +22,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 @router.post("/", response_model=ApplicationResponse)
 async def create_application(app_data: ApplicationCreate, db: AsyncSession = Depends(get_db)):
     """Create a new loan application."""
+    # Idempotency check
+    result = await db.execute(select(Application).where(Application.idempotency_key == app_data.idempotency_key))
+    existing_app = result.scalar_one_or_none()
+    if existing_app:
+        return existing_app
+        
     new_app = Application(
+        idempotency_key=app_data.idempotency_key,
         applicant_name=app_data.applicant_name,
         applicant_email=app_data.applicant_email,
         requested_loan_amount=app_data.requested_loan_amount,
@@ -32,7 +39,7 @@ async def create_application(app_data: ApplicationCreate, db: AsyncSession = Dep
     db.add(new_app)
     await db.flush()  # to get the ID
     
-    await write_event(db, new_app.id, AuditEventType.APPLICATION_SUBMITTED, app_data.model_dump())
+    await write_event(db, new_app.id, AuditEventType.APPLICATION_SUBMITTED, "system", "Application submitted", details=app_data.model_dump())
     
     await db.commit()
     await db.refresh(new_app)
@@ -71,7 +78,7 @@ async def upload_document(
     )
     db.add(doc)
     
-    await write_event(db, app_id, AuditEventType.DOCUMENT_UPLOADED, {"doc_type": doc_type.value, "file_path": file_path})
+    await write_event(db, app_id, AuditEventType.DOCUMENT_UPLOADED, "system", f"Document {doc_type.value} uploaded", details={"file_path": file_path})
     
     await db.commit()
     await db.refresh(doc)
@@ -111,21 +118,33 @@ async def trigger_processing(app_id: UUID, db: AsyncSession = Depends(get_db)):
             extracted_data.overall_min_confidence = min(extracted_data.overall_min_confidence, ext_res.min_confidence)
             
     app.extraction_result = extracted_data.model_dump()
-    await write_event(db, app_id, AuditEventType.EXTRACTION_COMPLETED, app.extraction_result)
+    await write_event(db, app_id, AuditEventType.EXTRACTION_COMPLETED, "system", "Extraction completed", details=app.extraction_result)
     
     rules_res = rules_engine.evaluate(app, extracted_data)
     app.status = rules_res.decision
     app.rejection_reason = rules_res.rejection_reason
     app.flags = rules_res.flags
     
-    await write_event(db, app_id, AuditEventType.RULES_EVALUATED, rules_res.model_dump())
+    await write_event(db, app_id, AuditEventType.RULES_EVALUATED, "system", "Rules evaluated", details=rules_res.model_dump())
     
     if app.status == ApplicationStatus.AUTO_APPROVED:
-        await write_event(db, app_id, AuditEventType.AUTO_APPROVED, rules_res.model_dump())
+        await write_event(db, app_id, AuditEventType.AUTO_APPROVED, "system", "Auto approved", details=rules_res.model_dump())
     elif app.status == ApplicationStatus.AUTO_REJECTED:
-        await write_event(db, app_id, AuditEventType.AUTO_REJECTED, rules_res.model_dump())
+        await write_event(db, app_id, AuditEventType.AUTO_REJECTED, "system", "Auto rejected", details=rules_res.model_dump())
     elif app.status == ApplicationStatus.HUMAN_REVIEW:
-        await write_event(db, app_id, AuditEventType.ROUTED_TO_HUMAN, rules_res.model_dump())
+        await write_event(db, app_id, AuditEventType.ROUTED_TO_HUMAN, "system", "Routed to human review", details=rules_res.model_dump())
+        
+    # CRM Sync
+    from services.crm import crm_service
+    try:
+        await crm_service.sync_application(app_id, app.applicant_name, app.applicant_email, app.status.value)
+    except Exception as e:
+        # DB transaction is rolled back on exception in fastapi dependency if we raise,
+        # but since we already caught it we must rollback manually if we don't raise immediately.
+        # Actually, since we use AsyncSession, if we raise HTTPException, FastAPI's session dependency
+        # might just rollback depending on how it's written. Let's manually rollback to be safe.
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"CRM Sync Failed: {str(e)}")
         
     await db.commit()
     
@@ -149,7 +168,7 @@ async def approve_application(app_id: UUID, req: ReviewRequest, db: AsyncSession
         raise HTTPException(status_code=400, detail=f"Cannot approve app in status {app.status}")
         
     app.status = ApplicationStatus.MANUALLY_APPROVED
-    await write_event(db, app_id, AuditEventType.MANUALLY_APPROVED, req.model_dump())
+    await write_event(db, app_id, AuditEventType.MANUALLY_APPROVED, req.reviewer_id, "Manually approved", details=req.model_dump())
     await db.commit()
     return {"message": "Approved"}
 
@@ -166,6 +185,6 @@ async def reject_application(app_id: UUID, req: ReviewRequest, db: AsyncSession 
         
     app.status = ApplicationStatus.MANUALLY_REJECTED
     app.rejection_reason = "manual_review_rejection"
-    await write_event(db, app_id, AuditEventType.MANUALLY_REJECTED, req.model_dump())
+    await write_event(db, app_id, AuditEventType.MANUALLY_REJECTED, req.reviewer_id, "Manually rejected", details=req.model_dump())
     await db.commit()
     return {"message": "Rejected"}

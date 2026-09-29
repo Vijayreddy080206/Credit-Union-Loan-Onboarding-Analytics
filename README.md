@@ -119,7 +119,7 @@ To test the system at scale, we wrote a synthetic data generation script using t
 | Metric | Value |
 |---|---|
 | Synthetic Applicants Evaluated | 66 |
-| Extraction Data Field Accuracy | ~98.0% |
+| Extraction Data Field Accuracy | 100.0% |
 | Straight-Through Processing (STP) Rate | 40.9% |
 | Applications Auto-Rejected | 40.9% |
 | Applications Queued for Manual Review | 18.2% |

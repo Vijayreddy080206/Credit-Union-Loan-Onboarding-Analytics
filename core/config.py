@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_TEXT_MODEL: str = "openai/gpt-oss-120b"
-    GROQ_VISION_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_VISION_MODEL: str = "qwen/qwen3.8-27b"
     LLM_CONFIDENCE_THRESHOLD: float = 0.80
     LLM_TIMEOUT_SECONDS: int = 30
     LLM_MAX_RETRIES: int = 3

@@ -56,7 +56,7 @@ class CRMService:
             return True
         except Exception as e:
             logger.error("crm_sync_failed", app_id=str(app_id), error=str(e))
-            # We don't want to fail the whole application process if CRM is down
-            return False
+            # Sync failure MUST stop the application process.
+            raise
 
 crm_service = CRMService()
