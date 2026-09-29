@@ -1,0 +1,125 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — single source of truth for all application state and audit log
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: creditunion_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-creditunion}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-creditunion}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # n8n — self-hosted workflow orchestrator
+  # Design note: n8n runs as a separate service so the business logic in FastAPI
+  # is not coupled to the orchestration layer. They communicate via webhooks,
+  # which means you can swap n8n for Temporal or Airflow without touching the API.
+  # ---------------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: creditunion_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=changeme
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-creditunion}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-appuser}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - DB_POSTGRESDB_SCHEMA=n8n
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # FastAPI backend — the core application
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: creditunion_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MOCK_CRM_URL=http://mock-crm:9000
+      - N8N_WEBHOOK_BASE_URL=http://n8n:5678/webhook
+    volumes:
+      - ./:/app
+      - ./data/synthetic:/app/data/synthetic
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ---------------------------------------------------------------------------
+  # Mock CRM — a tiny FastAPI service that mirrors the HubSpot/Zoho REST shape.
+  # Design note: building a mock with the same API contract means your CRM
+  # service code works in dev without real credentials, AND you can swap the
+  # backing provider by just changing CRM_PROVIDER= in .env.
+  # ---------------------------------------------------------------------------
+  mock-crm:
+    build:
+      context: ./mock_crm
+      dockerfile: Dockerfile
+    container_name: creditunion_mock_crm
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      - MOCK_CRM_PORT=9000
+
+  # ---------------------------------------------------------------------------
+  # Streamlit dashboard — reads directly from Postgres (read-only queries)
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: creditunion_dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  default:
+    name: creditunion_net
